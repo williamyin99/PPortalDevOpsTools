@@ -1,8 +1,12 @@
 ﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Tooling.Connector;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 
 namespace tools
 {
@@ -17,8 +21,7 @@ namespace tools
                { "-p", "path" },
                { "--connectionString", "connectionString" },
                { "--method", "method" },
-               { "--path", "path" },
-               { "--alt6", "key6" }
+               { "--path", "path" }
            };
             var builder = new ConfigurationBuilder();
             builder.AddCommandLine(args, switchMappings);
@@ -58,7 +61,12 @@ namespace tools
                         ImportWebTemplates(svc, path);
                         break;
 
-                    case "":
+                    case "exportwebfiles":
+                        ExportWebFiles(svc, path);
+                        break;
+
+                    case "importwebfiles":
+                        ImportWebFiles(svc, path);
                         break;
 
                     default:
@@ -112,6 +120,7 @@ namespace tools
 
         private static void ExportWebTemplates(CrmServiceClient svc, string exportPath = "src/webtemplates")
         {
+            Directory.CreateDirectory(exportPath);
             string fetchXML =
                 @"<fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false' returntotalrecordcount='true' >
                     <entity name='adx_webtemplate'>
@@ -120,6 +129,7 @@ namespace tools
                         <attribute name='adx_source' />
                     </entity>
                  </fetch>";
+
             var queryResult = svc.GetEntityDataByFetchSearchEC(fetchXML);
             if (queryResult != null)
             {
@@ -133,11 +143,82 @@ namespace tools
 
                         var headline = $"<!-- {id} -->";
                         var source = headline + Environment.NewLine + entity.Attributes["adx_source"];
-                        Directory.CreateDirectory(exportPath);
+
                         File.WriteAllText($"{exportPath}/{name}.html", source);
                     }
                 }
                 Console.WriteLine(string.Format("WebTemplates Records Count : {0}", queryResult.TotalRecordCount));
+            }
+        }
+
+        private static void ExportWebFiles(CrmServiceClient svc, string exportPath, string filterId = "")
+        {
+            var filter = "";
+            if (!string.IsNullOrEmpty(filterId))
+            {
+                filter = $"";
+            }
+
+            string fetchXML =
+                $@"
+                <fetch top='1'>
+                  <entity name='annotation' >
+                    <attribute name='documentbody' />
+                    <attribute name='objectid' />
+                    <link-entity name='adx_webfile' from='adx_webfileid' to='objectid' link-type='inner' alias='f' >
+                      <attribute name='adx_webfileid' />
+                      <attribute name='adx_name' />
+                      <attribute name='adx_partialurl' />
+                      <attribute name='adx_websiteid' />
+                        {filter}
+                    </link-entity>
+                  </entity>
+                </fetch>";
+
+            var queryResult = svc.GetEntityDataByFetchSearchEC(fetchXML);
+            if (queryResult != null)
+            {
+                Directory.CreateDirectory(exportPath);
+
+                var mapList = new List<dynamic>();
+                foreach (var entity in queryResult.Entities)
+                {
+                    var fileName = ((entity.Attributes["f.adx_partialurl"] as AliasedValue).Value as string).Split('/').Last();
+                    var id = (entity.Attributes["f.adx_webfileid"] as AliasedValue).Value;
+                    var str = entity.Attributes["documentbody"] as string;
+                    var docBody = Convert.FromBase64String(str);
+                    if (docBody != null)
+                    {
+                        Console.WriteLine($"Working on WebFile: {fileName}");
+                        using (var fileStream = new FileStream($"{exportPath}/{fileName}", FileMode.Create))
+                        {
+                            fileStream.Write(docBody, 0, docBody.Length);
+                            mapList.Add(new { FileName = fileName, WebFileId = id });
+                        }
+                    }
+                }
+                File.WriteAllText(exportPath + "/mapList.json", JsonConvert.SerializeObject(mapList));
+                Console.WriteLine(string.Format("WebTemplates Records Count : {0}", queryResult.TotalRecordCount));
+            }
+        }
+
+        private static void ImportWebFiles(CrmServiceClient svc, string sourcePath)
+        {
+            var mapObj = new[] { new { FileName = "", WebFileId = "" } };
+            var mapListPath = sourcePath + "/mapList.json";
+            if (!File.Exists(sourcePath + "/mapList.json"))
+            {
+                throw new Exception("Lock off mapList.json");
+            }
+            var mapList = JsonConvert.DeserializeAnonymousType(File.ReadAllText(mapListPath), mapObj);
+
+            var files = new DirectoryInfo(sourcePath).GetFiles().ToDictionary(x => x.Name);
+
+            foreach (var map in mapList)
+            {
+                var updateData = new Dictionary<string, CrmDataTypeWrapper>();
+                updateData.Add("documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String));
+                svc.CreateAnnotation("adx_webfile", Guid.Parse(map.WebFileId), updateData);
             }
         }
     }
