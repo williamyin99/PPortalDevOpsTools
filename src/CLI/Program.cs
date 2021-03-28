@@ -1,5 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Messages;
+using Microsoft.Xrm.Sdk.Metadata;
 using Microsoft.Xrm.Tooling.Connector;
 using Newtonsoft.Json;
 using System;
@@ -69,6 +71,10 @@ namespace tools
                         ImportWebFiles(svc, path);
                         break;
 
+                    case "exportcontentsnippets":
+                        ExportContentSnippets(svc, path);
+                        break;
+
                     default:
                         return;
                 }
@@ -76,7 +82,6 @@ namespace tools
             else
             {
                 ShowCrmErrors(svc);
-
                 return;
             }
         }
@@ -135,15 +140,23 @@ namespace tools
             {
                 foreach (var entity in queryResult.Entities)
                 {
-                    var name = entity.Attributes["adx_name"];
+                    var name = entity.Attributes["adx_name"].ToString();
                     var id = entity.Attributes["adx_webtemplateid"];
                     if (entity.Attributes.ContainsKey("adx_source"))
                     {
                         Console.WriteLine($"Working on WebTemplate: {name}");
 
                         var headline = $"<!-- {id} -->";
-                        var source = headline + Environment.NewLine + entity.Attributes["adx_source"];
+                        var source = entity.Attributes["adx_source"].ToString();
+                        if (!source.Contains(headline))
+                        {
+                            source = headline + Environment.NewLine + source;
+                        }
 
+                        if (name.Contains('/'))
+                        {
+                            name = name.Replace('/', '-');
+                        }
                         File.WriteAllText($"{exportPath}/{name}.html", source);
                     }
                 }
@@ -161,7 +174,7 @@ namespace tools
 
             string fetchXML =
                 $@"
-                <fetch top='1'>
+                <fetch>
                   <entity name='annotation' >
                     <attribute name='documentbody' />
                     <attribute name='objectid' />
@@ -198,7 +211,7 @@ namespace tools
                     }
                 }
                 File.WriteAllText(exportPath + "/mapList.json", JsonConvert.SerializeObject(mapList));
-                Console.WriteLine(string.Format("WebTemplates Records Count : {0}", queryResult.TotalRecordCount));
+                Console.WriteLine(string.Format("WebFiles Records Count : {0}", queryResult.TotalRecordCount));
             }
         }
 
@@ -216,9 +229,53 @@ namespace tools
 
             foreach (var map in mapList)
             {
-                var updateData = new Dictionary<string, CrmDataTypeWrapper>();
-                updateData.Add("documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String));
+                var updateData = new Dictionary<string, CrmDataTypeWrapper>
+                {
+                    { "documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String) }
+                };
                 svc.CreateAnnotation("adx_webfile", Guid.Parse(map.WebFileId), updateData);
+            }
+        }
+
+        private static void ExportContentSnippets(CrmServiceClient svc, string exportPath)
+        {
+            Directory.CreateDirectory(exportPath);
+            string fetchXML =
+                @"<fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false' returntotalrecordcount='true' >
+                    <entity name='adx_contentsnippet'>
+                        <attribute name='adx_name' />
+                        <attribute name='adx_contentsnippetid' />
+                        <attribute name='adx_value' />
+                        <attribute name='adx_type' />
+                    </entity>
+                 </fetch>";
+
+            var queryResult = svc.GetEntityDataByFetchSearchEC(fetchXML);
+            if (queryResult != null)
+            {
+                foreach (var entity in queryResult.Entities)
+                {
+                    var name = entity.Attributes["adx_name"].ToString();
+                    var id = entity.Attributes["adx_contentsnippetid"];
+                    if (entity.Attributes.ContainsKey("adx_value"))
+                    {
+                        Console.WriteLine($"Working on ContentSnippets: {name}");
+
+                        var headline = $"<!-- {id} -->";
+                        var source = entity.Attributes["adx_value"].ToString();
+                        if (!source.Contains(headline))
+                        {
+                            source = headline + Environment.NewLine + source;
+                        }
+
+                        if (name.Contains('/'))
+                        {
+                            name = name.Replace('/', '-');
+                        }
+                        File.WriteAllText($"{exportPath}/{name}.html", source);
+                    }
+                }
+                Console.WriteLine(string.Format("ContentSnippets Records Count : {0}", queryResult.TotalRecordCount));
             }
         }
     }
