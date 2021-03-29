@@ -59,16 +59,8 @@ namespace tools
                         ExportWebTemplates(svc, path);
                         break;
 
-                    case "importwebtemplates":
-                        ImportWebTemplates(svc, path);
-                        break;
-
                     case "exportwebfiles":
                         ExportWebFiles(svc, path);
-                        break;
-
-                    case "importwebfiles":
-                        ImportWebFiles(svc, path);
                         break;
 
                     case "exportcontentsnippets":
@@ -96,31 +88,6 @@ namespace tools
             Console.WriteLine(svc.LastCrmException.StackTrace);
 
             throw new Exception(svc.LastCrmException.Message);
-        }
-
-        private static void ImportWebTemplates(CrmServiceClient svc, string sourcePath)
-        {
-            var files = new DirectoryInfo(sourcePath).GetFiles();
-            foreach (var file in files)
-            {
-                if (file.Extension != ".html")
-                {
-                    continue;
-                }
-                var raw = File.ReadAllText(file.FullName);
-
-                var id = raw.Split(' ')[1];
-                var source = raw.Substring(47);
-
-                var updateData = new Dictionary<string, CrmDataTypeWrapper>();
-                updateData.Add("adx_source", new CrmDataTypeWrapper(source, CrmFieldType.String));
-                var updateAccountStatus = svc.UpdateEntity("adx_webtemplate", "adx_webtemplateid", Guid.Parse(id), updateData);
-
-                if (updateAccountStatus != true)
-                {
-                    ShowCrmErrors(svc);
-                }
-            }
         }
 
         private static void ExportWebTemplates(CrmServiceClient svc, string exportPath = "src/webtemplates")
@@ -191,8 +158,8 @@ namespace tools
             var queryResult = svc.GetEntityDataByFetchSearchEC(fetchXML);
             if (queryResult != null)
             {
+                Directory.Delete(exportPath, true);
                 Directory.CreateDirectory(exportPath);
-
                 var mapList = new List<dynamic>();
                 foreach (var entity in queryResult.Entities)
                 {
@@ -206,34 +173,12 @@ namespace tools
                         using (var fileStream = new FileStream($"{exportPath}/{fileName}", FileMode.Create))
                         {
                             fileStream.Write(docBody, 0, docBody.Length);
-                            mapList.Add(new { FileName = fileName, WebFileId = id });
+                            mapList.Add(new { FileName = fileName, OriginName = (entity.Attributes["f.adx_name"] as AliasedValue).Value, WebFileId = id });
                         }
                     }
                 }
                 File.WriteAllText(exportPath + "/mapList.json", JsonConvert.SerializeObject(mapList));
                 Console.WriteLine(string.Format("WebFiles Records Count : {0}", queryResult.TotalRecordCount));
-            }
-        }
-
-        private static void ImportWebFiles(CrmServiceClient svc, string sourcePath)
-        {
-            var mapObj = new[] { new { FileName = "", WebFileId = "" } };
-            var mapListPath = sourcePath + "/mapList.json";
-            if (!File.Exists(sourcePath + "/mapList.json"))
-            {
-                throw new Exception("Lock off mapList.json");
-            }
-            var mapList = JsonConvert.DeserializeAnonymousType(File.ReadAllText(mapListPath), mapObj);
-
-            var files = new DirectoryInfo(sourcePath).GetFiles().ToDictionary(x => x.Name);
-
-            foreach (var map in mapList)
-            {
-                var updateData = new Dictionary<string, CrmDataTypeWrapper>
-                {
-                    { "documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String) }
-                };
-                svc.CreateAnnotation("adx_webfile", Guid.Parse(map.WebFileId), updateData);
             }
         }
 
