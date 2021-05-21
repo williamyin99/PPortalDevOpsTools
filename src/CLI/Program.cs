@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Metadata;
 using Microsoft.Xrm.Tooling.Connector;
@@ -178,6 +179,7 @@ namespace tools
                   <entity name='annotation' >
                     <attribute name='documentbody' />
                     <attribute name='objectid' />
+                    <attribute name='modifiedon' />
                     <link-entity name='adx_webfile' from='adx_webfileid' to='objectid' link-type='inner' alias='f' >
                       <attribute name='adx_webfileid' />
                       <attribute name='adx_name' />
@@ -194,8 +196,10 @@ namespace tools
                 Directory.CreateDirectory(exportPath);
 
                 var mapList = new List<dynamic>();
-                foreach (var entity in queryResult.Entities)
+                foreach (var entities in queryResult.Entities.GroupBy(x => x.Attributes["f.adx_webfileid"]))
                 {
+                    var entity = entities.OrderByDescending(x => x.Attributes["modifiedon"]).First();
+
                     var fileName = ((entity.Attributes["f.adx_partialurl"] as AliasedValue).Value as string).Split('/').Last();
                     var id = (entity.Attributes["f.adx_webfileid"] as AliasedValue).Value;
                     var str = entity.Attributes["documentbody"] as string;
@@ -231,7 +235,8 @@ namespace tools
             {
                 var updateData = new Dictionary<string, CrmDataTypeWrapper>
                 {
-                    { "documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String) }
+                    { "documentbody", new CrmDataTypeWrapper(Convert.ToBase64String(File.ReadAllBytes(files[map.FileName].FullName)), CrmFieldType.String) },
+                    { "filename", new CrmDataTypeWrapper(map.FileName, CrmFieldType.String) }
                 };
                 svc.CreateAnnotation("adx_webfile", Guid.Parse(map.WebFileId), updateData);
             }
@@ -278,5 +283,6 @@ namespace tools
                 Console.WriteLine(string.Format("ContentSnippets Records Count : {0}", queryResult.TotalRecordCount));
             }
         }
+
     }
 }
